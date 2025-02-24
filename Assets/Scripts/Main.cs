@@ -1,143 +1,349 @@
-using System;
+using System.Collections;
 using System.Collections.Generic;
-using Unity.Collections;
-using Unity.VisualScripting;
+using Unity.Mathematics;
 using UnityEngine;
-using UnityEngine.UI;
-class _ : MonoBehaviour
+
+public class _ : MonoBehaviour
 {
-    void Start() => Application.targetFrameRate = 120;
-    void Update() => Main.Instance.Update();
+    Game game;
+    void Start()
+    {
+        Application.targetFrameRate = 30;
+        game = new Game();
+    }
+    void Update() => game.Update();
 }
 
-
-
-public class Main
+public class Game
 {
-    private static readonly Main instance = new Main();
-    public static Main Instance => instance;
+    InputController inputController;
+    Render render;
+    PuyoPair puyoPair = null;
+    List<Puyo> puyos = new List<Puyo>();
+    Eraser eraser = new Eraser();
 
-    private InputController inputController = new();
-    public Ui ui = new();
-    public List<Puyo> puyos = new();
-
-    public PuyoPair puyoPair;
-    private Eraser eraser = new Eraser();
-    private Main()
+    public Game()
     {
-        for (int x = 0; x < 8; x++)
+        inputController = new InputController();
+        render = new Render();
+
+        for (int y = 0; y < 16; y++)
         {
-            for (int y = 0; y < 14; y++)
+            for (int x = 0; x < 8; x++)
             {
-                if (x == 0) NewPuyo(new Vector2(x + 0.5f, y + 0.5f));
-                else if (y == 0) NewPuyo(new Vector2(x + 0.5f, y + 0.5f));
-                else if (x == 7) NewPuyo(new Vector2(x + 0.5f, y + 0.5f));
+                if (x == 0 || x == 7 || y == 0 || y == 15)
+                {
+                    puyos.Add(new Puyo(new Vector2(x + 0.5f, y + 0.5f)));
+                    puyos[puyos.Count - 1].fixedPuyo = true;
+                }
             }
         }
 
-
-
     }
+    private bool NeedNewPuyo()
+    {
+        if (puyoPair != null) return false;
+
+        foreach (var puyo in puyos)
+        {
+
+            if (puyo.position.x < 1) continue;
+            if (puyo.position.y < 1) continue;
+            if (puyo.position.x > 7) continue;
+            if (puyo.position.y > 15) continue;
+
+            if (puyo.cnt < 15) return false;
+
+            if (eraser.cnt > 0) return false;
+        }
+
+        return true;
+    }
+
     public void Update()
     {
-        if (puyoPair == null)
+        Vector2 direction = inputController.Update();
+
+        puyos.Sort((a, b) => b.position.y.CompareTo(a.position.y));
+
+        if (NeedNewPuyo())
         {
-            puyoPair = new PuyoPair(NewPuyo(new Vector2(3.5f, 12.5f)), NewPuyo(new Vector2(3.5f, 13.5f)));
+            puyoPair = new PuyoPair(new Vector2(3.5f, 12.5f));
         }
 
-        Vector2 input = inputController.Update();
 
-        if (input == Vector2.up + Vector2.right) puyoPair.Rotation();
-        else if (input == Vector2.up) puyoPair.Drop();
-        else puyoPair.Move(input);
-
-
-        puyoPair.Update();
-
-        if (puyoPair.sleepCnt > 30)
+        if (direction == Vector2.right + Vector2.down)
         {
-            puyoPair = null;
-
+            if (puyoPair != null)
+            {
+                puyoPair.Rotate(puyos);
+            }
+        }
+        // else if (direction == Vector2.right * 2)
+        // {
+        //     puyos.Add(new Puyo(new Vector2(Random.Range(-5, 5), Random.Range(-5, 5))));
+        // }
+        else if (direction != Vector2.zero)
+        {
+            if (puyoPair != null)
+            {
+                puyoPair.Move(direction, puyos);
+            }
         }
 
-        foreach (Puyo p in Main.Instance.puyos)
+        if (puyoPair != null)
         {
-            if (puyoPair != null && puyoPair.parent == p) continue;
-            if (puyoPair != null && puyoPair.child == p) continue;
 
-            p.Update();
+            if (puyoPair.cnt == 30)
+            {
+                puyos.Add(puyoPair.parent);
+                puyos.Add(puyoPair.child);
+                puyoPair = null;
+            }
+            else
+            {
+                puyoPair.Update(puyos);
+            }
         }
 
-        eraser.Update();
+        for (int i = puyos.Count - 1; i >= 0; i--)
+        {
+            puyos[i].Update(puyos);
+        }
+
+        eraser.Update(puyos);
 
 
-
-        ui.Update();
+        render.Update(puyoPair, puyos);
     }
+}
 
-    private Puyo NewPuyo(Vector2 position)
+public static class Public
+{
+    public static Puyo CheckCollision(Puyo puyo, List<Puyo> puyos)
     {
-        Puyo puyo = new Puyo(position);
-        puyos.Add(puyo);
-        ui.newGameObject(puyo);
-        return puyo;
-    }
-    public static Puyo Collision(Puyo puyo)
-    {
-        foreach (var p in Main.Instance.puyos)
+        foreach (var other in puyos)
         {
-            if (puyo == p) continue;
-            if (Vector2.SqrMagnitude(puyo.position - p.position) < 1 - 0.001f) return p;
+            if (puyo == other)
+            {
+                continue;
+            }
+            if (Vector2.Distance(puyo.position, other.position) < 1)
+            {
+                return other;
+            }
         }
         return null;
     }
+}
+public class InputController
+{
+    public Vector2 Update()
+    {
+        if (Input.GetKeyDown(KeyCode.W))
+        {
+            return Vector2.up;
+        }
+        else if (Input.GetKeyDown(KeyCode.S))
+        {
+            return Vector2.down;
+        }
+        else if (Input.GetKeyDown(KeyCode.A))
+        {
+            return Vector2.left;
+        }
+        else if (Input.GetKeyDown(KeyCode.D))
+        {
+            return Vector2.right;
+        }
+        else if (Input.GetKeyDown(KeyCode.Space))
+        {
+            return Vector2.right + Vector2.down;
+        }
+        else if (Input.GetKeyDown(KeyCode.Return))
+        {
+            return 2 * Vector2.right;
+        }
 
+        return Vector2.zero;
+    }
+}
+public class Puyo
+{
+    public bool erasable = false;
+    public int color;
+    public Vector2 position;
+    public int cnt = 0;
+    public bool fixedPuyo = false;
+    public Puyo(Vector2 position)
+    {
+        this.position = position;
+        this.color = UnityEngine.Random.Range(0, 3);
+    }
+    public void Update(List<Puyo> puyos)
+    {
+        if (fixedPuyo) return;
+        if (Vector2Move(Vector2.down * 0.3f, puyos) != Vector2.down * 0.3f)
+        {
+            cnt++;
+        }
+        else
+        {
+            cnt = 0;
+        }
+    }
+
+
+    public Vector2 Vector2Move(Vector2 direction, List<Puyo> puyos)
+    {
+        Vector2 originalPosition = position;
+        Move(direction, puyos);
+        return position - originalPosition;
+    }
+    public void Move(Vector2 direction, List<Puyo> puyos)
+    {
+        Vector2 originalPosition = position;
+        position += direction;
+
+        Puyo collidedPuyo = Public.CheckCollision(this, puyos);
+        if (collidedPuyo == null) return;
+
+        position = originalPosition;
+
+        if (direction.y != 0)
+        {
+            position = collidedPuyo.position + (direction.y > 0 ? Vector2.down : Vector2.up);
+            return;
+        }
+
+        float verticalDifference = position.y - collidedPuyo.position.y;
+        if (Mathf.Abs(verticalDifference) < 0.5f) return;
+        position = collidedPuyo.position + (verticalDifference > 0 ? Vector2.up : Vector2.down);
+
+        if (Public.CheckCollision(this, puyos) == null) return;
+        position = originalPosition;
+    }
+}
+
+public class Rotation
+{
+    List<Vector2> directions = new List<Vector2> { Vector2.up, Vector2.right, Vector2.down, Vector2.left };
+
+    public Vector2 Get() => directions[0];
+    public Vector2 Next()
+    {
+        Vector2 currentDirection = directions[0];
+        directions.RemoveAt(0);
+        directions.Add(currentDirection);
+        return directions[0];
+    }
+}
+public class PuyoPair
+{
+    public Puyo parent, child;
+    Rotation rotation;
+    public int cnt = 0;
+    public PuyoPair(Vector2 position)
+    {
+        rotation = new Rotation();
+        parent = new Puyo(position);
+        child = new Puyo(position + rotation.Get());
+    }
+
+
+    private void Sync(Puyo p)
+    {
+        if (p == parent) child.position = parent.position + rotation.Get();
+        else parent.position = child.position - rotation.Get();
+    }
+    public void Rotate(List<Puyo> puyos)
+    {
+        Vector2 originalPosition = parent.position;
+
+
+        child.position = parent.position;
+        child.Move(rotation.Next(), puyos);
+        Sync(child);
+        if (Public.CheckCollision(parent, puyos) == null) return;
+
+        rotation.Next();
+
+        child.position = originalPosition;
+        Sync(child);
+    }
+    public void Update(List<Puyo> puyos)
+    {
+        if (Vector2Move(Vector2.down * 0.1f, puyos) != Vector2.down * 0.1f)
+        {
+            cnt++;
+        }
+        else
+        {
+            cnt = 0;
+        }
+    }
+
+    public Vector2 Vector2Move(Vector2 direction, List<Puyo> puyos)
+    {
+        Vector2 originalPosition = parent.position;
+        Move(direction, puyos);
+        return parent.position - originalPosition;
+    }
+
+    public void Move(Vector2 direction, List<Puyo> puyos)
+    {
+        Vector2 originalPosition = parent.position;
+
+
+        parent.Move(direction, puyos);
+        Sync(parent);
+        if (Public.CheckCollision(child, puyos) == null) return;
+
+        parent.position = originalPosition;
+        Sync(parent);
+
+        child.Move(direction, puyos);
+        Sync(child);
+        if (Public.CheckCollision(parent, puyos) == null) return;
+
+        parent.position = originalPosition;
+        Sync(parent);
+    }
 }
 
 public class Eraser
 {
-    public List<Puyo> list = new List<Puyo>();
+    List<Puyo> list = new List<Puyo>();
+    public int cnt = 0;
 
-    int cnt;
-    public void Update()
+    public void Update(List<Puyo> puyos)
     {
 
-        if (list.Count != 0)
+        if (list.Count > 0)
         {
             cnt++;
-            if (cnt == 1)
+            if (cnt < 30) return;
+            foreach (var puyo in list)
             {
-                foreach (Puyo puyo in list)
-                {
-                    puyo.fire = true;
-                }
+                puyos.Remove(puyo);
             }
-            if (cnt > 60)
-            {
-                foreach (Puyo puyo in list)
-                {
-                    UnityEngine.Object.Destroy(Main.Instance.ui.dict[puyo].transform.gameObject);
-                    Main.Instance.puyos.Remove(puyo);
-                    Main.Instance.ui.dict.Remove(puyo);
-                }
-
-                list.Clear();
-            }
+            list.Clear();
             return;
         }
 
         cnt = 0;
 
-        Puyo[,] array = new Puyo[8, 14];
-        foreach (Puyo puyo in Main.Instance.puyos)
-        {
-            if (Main.Instance.puyoPair != null)
-            {
-                if (Main.Instance.puyoPair.parent == puyo) continue;
-                if (Main.Instance.puyoPair.child == puyo) continue;
-            }
-            if (puyo.sleepCnt < 60) continue;
 
+
+        Puyo[,] array = new Puyo[8, 14];
+        foreach (Puyo puyo in puyos)
+        {
+            if (puyo.position.x < 1) continue;
+            if (puyo.position.y < 1) continue;
+            if (puyo.position.x > 7) continue;
+            if (puyo.position.y > 15) continue;
+
+            if (puyo.cnt < 15) return;
             array[(int)puyo.position.x, (int)puyo.position.y] = puyo;
         }
 
@@ -147,8 +353,13 @@ public class Eraser
             {
                 if (array[x, y] == null) continue;
                 List<Puyo> connected = DFS(array[x, y].color, array, x, y);
-                if (connected.Count < 4) continue;
+                if (connected.Count < 3) continue;
                 list.AddRange(connected);
+                cnt = 1;
+                foreach (var puyo in connected)
+                {
+                    puyo.erasable = true;
+                }
             }
         }
 
@@ -173,241 +384,69 @@ public class Eraser
         list.AddRange(DFS(color, array, x, y - 1));
         return list;
     }
-
-
-
-
-
 }
 
-
-
-
-
-public class Puyo
+public class Render
 {
-    public Vector2 position;
-    public int sleepCnt;
-    public int color = UnityEngine.Random.Range(0, 4);
-    public bool fire = false;
-    public Puyo(Vector2 position)
+    GameObject puyoGameObject;
+    Dictionary<Puyo, Transform> puyoTransforms = new Dictionary<Puyo, Transform>();
+    public Render()
     {
-        this.position = position;
-    }
-
-    public void Update()
-    {
-        if (position.y == 0.5f) return;
-
-        Vector2 p = position;
-        Move(Vector2.down * 0.03f);
-        if (p == position) sleepCnt++;
-        else sleepCnt = 0;
-    }
-
-
-    public void Move(Vector2 direction)
-    {
-        position += direction;
-        Puyo c = Main.Collision(this);
-        if (c == null) return;
-
-        position -= direction;
-        Vector2 po = position;
-        if (direction.x != 0)
-        {
-            float f = position.y - c.position.y;
-            if (Mathf.Abs(f) < 0.5f) return;
-            position = c.position + (f > 0 ? Vector2.up : Vector2.down);
-            if (Main.Collision(this) == null) return;
-            position = po;
-
-
-        }
-
-        if (direction.y != 0)
-        {
-            position = c.position + (direction.y > 0 ? Vector2.down : Vector2.up);
-        }
-    }
-
-}
-public class Rotation
-{
-    private List<Vector2> list = new List<Vector2>() { Vector2.up, Vector2.right, Vector2.down, Vector2.left };
-    public Vector2 Next()
-    {
-        Vector2 tmp = list[0];
-        list.Remove(tmp);
-        list.Add(tmp);
-        return list[0];
-    }
-    public Vector2 Get()
-    {
-        return list[0];
-    }
-
-}
-
-public class PuyoPair
-{
-    public Puyo parent, child;
-    public int sleepCnt;
-    Rotation rotation = new();
-    public PuyoPair(Puyo p, Puyo c)
-    {
-        parent = p;
-        child = c;
-    }
-    public void Drop()
-    {
-        for (int i = 0; i < 14; i++)
-        {
-            Vector2 p = parent.position;
-            Move(Vector2.down);
-            if (parent.position - p == Vector2.down) continue;
-            break;
-        }
-        sleepCnt = 30;
-
-    }
-    public void Update()
-    {
-        Vector2 p = parent.position;
-        Move(Vector2.down * 0.03f);
-
-        if (p == parent.position) sleepCnt++;
-        else sleepCnt = 0;
-    }
-    private void SyncWith(Puyo p)
-    {
-        if (p == parent) child.position = parent.position + rotation.Get();
-        else if (p == child) parent.position = child.position - rotation.Get();
-    }
-
-    private void SetPos(Puyo p, Vector2 pos)
-    {
-        if (p == parent) parent.position = pos;
-        else if (p == child) child.position = pos;
-        SyncWith(p);
-    }
-    public void Rotation()
-    {
-        Vector2 pos = parent.position;
-
-        child.position = pos;
-        child.Move(rotation.Next());
-        SyncWith(child);
-        if (Main.Collision(parent) == null) return;
-
-        rotation.Next();
-        parent.position = child.position;
-        child.position = pos;
-        sleepCnt = 0;
-    }
-
-    public void Move(Vector2 vector2)
-    {
-        Vector2 pos = parent.position;
-        if (vector2.normalized == rotation.Get())
-        {
-            child.Move(vector2);
-            SyncWith(child);
-            return;
-        }
-        if (vector2.normalized == -rotation.Get())
-        {
-            parent.Move(vector2);
-            SyncWith(parent);
-            return;
-        }
-
-        parent.Move(vector2);
-        SyncWith(parent);
-        if (Main.Collision(child) == null) return;
-
-        SetPos(parent, pos);
-
-        child.Move(vector2);
-        SyncWith(child);
-
-
-    }
-}
-
-
-public class Ui
-{
-    private GameObject puyo;
-    private GameObject canvas;
-    public Dictionary<Puyo, RectTransform> dict = new Dictionary<Puyo, RectTransform>();
-    public Ui()
-    {
-        Camera camera = new GameObject("").AddComponent<Camera>();
+        Camera camera = new GameObject().AddComponent<Camera>();
         camera.orthographic = true;
+        camera.orthographicSize = 10;
+        camera.transform.position = new Vector3(4, 8, -1);
+        camera.clearFlags = CameraClearFlags.SolidColor;
+        camera.backgroundColor = Color.black;
 
-        canvas = new GameObject("Canvas");
-        canvas.AddComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
-        canvas.GetComponent<Canvas>().worldCamera = camera;
-        canvas.transform.gameObject.AddComponent<CanvasScaler>().uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        canvas.transform.gameObject.GetComponent<CanvasScaler>().referenceResolution = new Vector2(1920, 1080);
-
-        puyo = new GameObject("puyo");
-        Image image = puyo.AddComponent<Image>();
-        puyo.transform.SetParent(canvas.transform, false);
-        image.rectTransform.sizeDelta = new Vector2(64, 64);
-        image.sprite = Resources.Load<Sprite>("Circle");
-        image.rectTransform.position = new Vector2(-1024, -1024);
+        puyoGameObject = new GameObject();
+        puyoGameObject.transform.position = new Vector3(-256, -256, 0);
+        puyoGameObject.AddComponent<SpriteRenderer>().sprite = Resources.Load<Sprite>("Circle");
     }
-    public void newGameObject(Puyo puyo)
-    {
-        GameObject gameObject = UnityEngine.Object.Instantiate(this.puyo);
 
-        gameObject.GetComponent<Image>().color = Color.HSVToRGB(puyo.color * 0.2f, 0.5f, 0.8f);
-        dict.Add(puyo, gameObject.GetComponent<RectTransform>());
-        gameObject.transform.SetParent(canvas.transform, false);
-        dict[puyo].anchoredPosition = puyo.position;
-    }
-    public void Update()
+    public void Update(PuyoPair puyoPair, List<Puyo> puyos)
     {
-        foreach (var puyo in dict)
+        List<Puyo> list = new List<Puyo>(puyos);
+        if (puyoPair != null)
         {
-            puyo.Value.anchoredPosition = puyo.Key.position * 64 + new Vector2(-480, -270);
+            list.Add(puyoPair.parent);
+            list.Add(puyoPair.child);
+        }
 
-
-            if (puyo.Key.fire)
+        List<Puyo> keys = new List<Puyo>(puyoTransforms.Keys);
+        for (int i = keys.Count - 1; i >= 0; i--)
+        {
+            Puyo puyo = keys[i];
+            if (!list.Contains(puyo))
             {
-                puyo.Value.transform.localScale = new Vector2(1, 1.5f);
+                GameObject.Destroy(puyoTransforms[puyo].gameObject);
+                puyoTransforms.Remove(puyo);
+            }
+        }
+
+        foreach (var puyo in list)
+        {
+            if (!puyoTransforms.ContainsKey(puyo))
+            {
+                Transform transform = GameObject.Instantiate(puyoGameObject).transform;
+                transform.GetComponent<SpriteRenderer>().color = Color.HSVToRGB(puyo.color / 5f, 0.5f, 0.8f);
+                puyoTransforms.Add(puyo, transform);
+            }
+            puyoTransforms[puyo].position = puyo.position;
+            if (puyo.erasable)
+            {
+                puyoTransforms[puyo].localScale = new Vector3(1, 1.5f, 1);
                 continue;
             }
-
-            if (puyo.Key.sleepCnt > 60) continue;
+            if (puyo.cnt > 0)
             {
-                float f = puyo.Key.sleepCnt / 60f;
-                f = Mathf.Sin(Mathf.PI * f) * 0.25f;
-                puyo.Value.transform.localScale = new Vector2(1 + f, 1);
-
-                f = puyo.Key.sleepCnt / 60f;
-                f = Mathf.Sin(Mathf.PI * f);
-                puyo.Value.anchoredPosition = puyo.Value.anchoredPosition + Vector2.down * f * 16;
+                float f = puyo.cnt / 15f;
+                if (f > 1) f = 1;
+                f = Mathf.Sin(f * Mathf.PI) * 0.3f;
+                puyoTransforms[puyo].localScale = new Vector3(1 + f, 1 - f, 1);
+                puyoTransforms[puyo].position += new Vector3(0, -f, 0);
             }
-
-
         }
 
     }
-
-
-}
-
-public class InputController
-{
-    public Vector2 Update() =>
-        Input.GetKeyDown(KeyCode.W) ? Vector2.up :
-        Input.GetKeyDown(KeyCode.A) ? Vector2.left :
-        Input.GetKeyDown(KeyCode.S) ? Vector2.down :
-        Input.GetKeyDown(KeyCode.D) ? Vector2.right :
-        Input.GetKeyDown(KeyCode.Space) ? Vector2.up + Vector2.right :
-
-        Vector2.zero;
 }
