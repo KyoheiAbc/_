@@ -1,6 +1,4 @@
-using System.Collections;
 using System.Collections.Generic;
-using Unity.Mathematics;
 using UnityEngine;
 
 public class _ : MonoBehaviour
@@ -19,8 +17,10 @@ public class Game
     InputController inputController;
     Render render;
     PuyoPair puyoPair = null;
-    List<Puyo> puyos = new List<Puyo>();
     Eraser eraser = new Eraser();
+    List<Puyo> puyos = new List<Puyo>();
+
+    bool ACTIVE = true;
 
     public Game()
     {
@@ -31,95 +31,104 @@ public class Game
         {
             for (int x = 0; x < 8; x++)
             {
-                if (x == 0 || x == 7 || y == 0 || y == 15)
+                if (x == 0 || x == 7 || y == 0)
                 {
                     puyos.Add(new Puyo(new Vector2(x + 0.5f, y + 0.5f)));
-                    puyos[puyos.Count - 1].fixedPuyo = true;
                 }
             }
         }
+        puyos.Sort((a, b) => a.position.y.CompareTo(b.position.y));
 
     }
-    private bool NeedNewPuyo()
+
+    private bool NewPuyoPair()
     {
         if (puyoPair != null) return false;
 
+        if (ACTIVE) return true;
+
         foreach (var puyo in puyos)
         {
-
             if (puyo.position.x < 1) continue;
             if (puyo.position.y < 1) continue;
             if (puyo.position.x > 7) continue;
             if (puyo.position.y > 15) continue;
+            if (puyo.cnt <= 15)
+            {
+                return false;
+            }
+            // if (Public.CheckCollisionDown(puyo, puyos) == null)
+            // {
+            //     return false;
+            // }
+        }
 
-            if (puyo.cnt < 15) return false;
+        if (eraser.list.Count > 0)
+        {
+            return false;
+        }
 
-            if (eraser.cnt > 0) return false;
+        if (eraser.cnt > 0)
+        {
+            return false;
         }
 
         return true;
     }
 
+
+
     public void Update()
     {
-        Vector2 direction = inputController.Update();
-
-        puyos.Sort((a, b) => b.position.y.CompareTo(a.position.y));
-
-        if (NeedNewPuyo())
+        if (NewPuyoPair())
         {
             puyoPair = new PuyoPair(new Vector2(3.5f, 12.5f));
         }
 
-
-        if (direction == Vector2.right + Vector2.down)
-        {
-            if (puyoPair != null)
-            {
-                puyoPair.Rotate(puyos);
-            }
-        }
-        // else if (direction == Vector2.right * 2)
-        // {
-        //     puyos.Add(new Puyo(new Vector2(Random.Range(-5, 5), Random.Range(-5, 5))));
-        // }
-        else if (direction != Vector2.zero)
-        {
-            if (puyoPair != null)
-            {
-                puyoPair.Move(direction, puyos);
-            }
-        }
-
+        Vector2 direction = inputController.Update();
         if (puyoPair != null)
         {
-
-            if (puyoPair.cnt == 30)
-            {
-                puyos.Add(puyoPair.parent);
-                puyos.Add(puyoPair.child);
-                puyoPair = null;
-            }
-            else
-            {
-                puyoPair.Update(puyos);
-            }
+            puyoPair.Move(direction, puyos);
+            puyoPair.Update(puyos);
         }
 
-        for (int i = puyos.Count - 1; i >= 0; i--)
+
+        if (puyoPair != null && puyoPair.cnt > 30)
         {
-            puyos[i].Update(puyos);
+            puyos.Add(puyoPair.parent);
+            puyos.Add(puyoPair.child);
+            puyoPair = null;
+            puyos.Sort((a, b) => a.position.y.CompareTo(b.position.y));
+        }
+
+        foreach (var puyo in puyos)
+        {
+            puyo.Update(puyos);
         }
 
         eraser.Update(puyos);
 
-
-        render.Update(puyoPair, puyos);
+        render.Update(puyoPair, puyos, eraser.list);
     }
 }
 
 public static class Public
 {
+    public static Puyo CheckCollisionDown(Puyo puyo, List<Puyo> puyos)
+    {
+        foreach (var other in puyos)
+        {
+            if (puyo == other)
+            {
+                continue;
+            }
+            if (Vector2.Distance(puyo.position + Vector2.down, other.position) < 1)
+            {
+                return other;
+            }
+        }
+        return null;
+    }
     public static Puyo CheckCollision(Puyo puyo, List<Puyo> puyos)
     {
         foreach (var other in puyos)
@@ -170,19 +179,19 @@ public class InputController
 }
 public class Puyo
 {
-    public bool erasable = false;
     public int color;
     public Vector2 position;
     public int cnt = 0;
-    public bool fixedPuyo = false;
     public Puyo(Vector2 position)
     {
         this.position = position;
         this.color = UnityEngine.Random.Range(0, 3);
     }
+
+
     public void Update(List<Puyo> puyos)
     {
-        if (fixedPuyo) return;
+        if (position.y == 0.5f) return;
         if (Vector2Move(Vector2.down * 0.3f, puyos) != Vector2.down * 0.3f)
         {
             cnt++;
@@ -292,6 +301,17 @@ public class PuyoPair
 
     public void Move(Vector2 direction, List<Puyo> puyos)
     {
+        if (direction == Vector2.zero)
+        {
+            return;
+        }
+
+        if (direction == Vector2.right + Vector2.down)
+        {
+            Rotate(puyos);
+            return;
+        }
+
         Vector2 originalPosition = parent.position;
 
 
@@ -313,27 +333,25 @@ public class PuyoPair
 
 public class Eraser
 {
-    List<Puyo> list = new List<Puyo>();
+    public List<Puyo> list = new List<Puyo>();
     public int cnt = 0;
 
     public void Update(List<Puyo> puyos)
     {
-
         if (list.Count > 0)
         {
             cnt++;
-            if (cnt < 30) return;
-            foreach (var puyo in list)
+            if (cnt > 30)
             {
-                puyos.Remove(puyo);
+                foreach (var puyo in list)
+                {
+                    puyos.Remove(puyo);
+                }
+                list.Clear();
             }
-            list.Clear();
             return;
         }
-
         cnt = 0;
-
-
 
         Puyo[,] array = new Puyo[8, 14];
         foreach (Puyo puyo in puyos)
@@ -343,7 +361,8 @@ public class Eraser
             if (puyo.position.x > 7) continue;
             if (puyo.position.y > 15) continue;
 
-            if (puyo.cnt < 15) return;
+            if (puyo.cnt <= 15) return;
+
             array[(int)puyo.position.x, (int)puyo.position.y] = puyo;
         }
 
@@ -355,11 +374,6 @@ public class Eraser
                 List<Puyo> connected = DFS(array[x, y].color, array, x, y);
                 if (connected.Count < 3) continue;
                 list.AddRange(connected);
-                cnt = 1;
-                foreach (var puyo in connected)
-                {
-                    puyo.erasable = true;
-                }
             }
         }
 
@@ -404,7 +418,7 @@ public class Render
         puyoGameObject.AddComponent<SpriteRenderer>().sprite = Resources.Load<Sprite>("Circle");
     }
 
-    public void Update(PuyoPair puyoPair, List<Puyo> puyos)
+    public void Update(PuyoPair puyoPair, List<Puyo> puyos, List<Puyo> eraserList)
     {
         List<Puyo> list = new List<Puyo>(puyos);
         if (puyoPair != null)
@@ -432,12 +446,16 @@ public class Render
                 transform.GetComponent<SpriteRenderer>().color = Color.HSVToRGB(puyo.color / 5f, 0.5f, 0.8f);
                 puyoTransforms.Add(puyo, transform);
             }
+
             puyoTransforms[puyo].position = puyo.position;
-            if (puyo.erasable)
+
+
+            if (eraserList.Contains(puyo))
             {
                 puyoTransforms[puyo].localScale = new Vector3(1, 1.5f, 1);
                 continue;
             }
+
             if (puyo.cnt > 0)
             {
                 float f = puyo.cnt / 15f;
